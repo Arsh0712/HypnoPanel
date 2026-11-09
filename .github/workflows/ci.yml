@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+
+  panel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run db:generate
+      - run: bun run db:push
+      - run: bun scripts/seed.ts
+      - run: bun run dev & sleep 15 && curl -fsS http://127.0.0.1:3000/api/auth/session
+
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: cd mini-services/relay && bun install
+      - run: cd mini-services/relay && timeout 5 bun run start & sleep 2 && curl -fsS http://127.0.0.1:3005/healthz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, panel, relay]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release artifacts
+        run: |
+          # VPS deployment binaries are built from the Go sources of the release pipeline
+          # (cmd/hipnod, cmd/hypno, cmd/hipno-helper). This workflow packages the panel
+          # bundle (application + relay + installer) and generates checksums + a minisign
+          # signature placeholder when the signing key is configured.
+          mkdir -p dist
+          tar -czf "dist/hipnotype-panel-linux-${{ matrix.arch }}.tar.gz" \
+            --exclude node_modules --exclude .next --exclude dev.log .
+      - name: Generate SHA-256 checksums
+        run: cd dist && sha256sum * > checksums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

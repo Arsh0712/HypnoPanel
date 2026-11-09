@@ -1,0 +1,447 @@
+// HipnoType Panel — Prisma schema (SQLite, WAL)
+// Built by HipnoType · https://github.com/Arsh0712/HypnoPanel
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- users/auth
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String?
+  passwordHash       String
+  role               String    @default("viewer") // admin | developer | viewer
+  mustChangePassword Boolean   @default(false)
+  totpEnabled        Boolean   @default(false)
+  totpSecretEnc      String? // AES-256-GCM encrypted base32 secret
+  recoveryCodesJson  String? // JSON array of sha256 hashes
+  disabled           Boolean   @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  sessions           Session[]
+  apiTokens          ApiToken[]
+}
+
+model Session {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash         String    @unique
+  ip                String?
+  userAgent         String?
+  createdAt         DateTime  @default(now())
+  lastSeenAt        DateTime  @default(now())
+  expiresAt         DateTime // idle expiry (sliding)
+  absoluteExpiresAt DateTime
+  revokedAt         DateTime?
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  ip        String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+}
+
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  prefix     String // first 10 chars, shown in UI
+  tokenHash  String    @unique
+  scopes     String    @default("[]") // JSON array of scope strings
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+}
+
+// ---------------------------------------------------------------- audit
+
+model AuditEntry {
+  id         String   @id @default(cuid())
+  seq        Int      @unique
+  ts         DateTime @default(now())
+  actorId    String?
+  actorEmail String?
+  action     String
+  target     String?
+  source     String   @default("web") // web | local-cli | system
+  sourceIp   String?
+  result     String   @default("success") // success | failure
+  details    String? // JSON
+  prevHash   String
+  hash       String
+
+  @@index([ts])
+  @@index([action])
+}
+
+// ---------------------------------------------------------------- settings / access
+
+model Setting {
+  key   String @id
+  value String // JSON-encoded value
+}
+
+model AccessToken {
+  id            String    @id @default(cuid())
+  token         String    @unique // 32-char base62, or custom slug (16-64)
+  isCustom      Boolean   @default(false)
+  label         String?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+}
+
+// ---------------------------------------------------------------- websites / ssl / databases
+
+model Website {
+  id          String        @id @default(cuid())
+  name        String
+  slug        String        @unique
+  domain      String
+  type        String        @default("static") // static | php | node | proxy
+  docRoot     String
+  linuxUser   String
+  phpVersion  String?
+  upstreamUrl String?
+  status      String        @default("active") // active | disabled
+  sslMode     String        @default("none") // none | custom | self | letsencrypt
+  certId      String?
+  config      String? // generated vhost config (Caddyfile format)
+  settings    String? // JSON: php ini overrides, redirects, auth, cache…
+
+  // guided domain onboarding (spec §2 — add domain wizard)
+  dnsStatus   String        @default("pending_dns") // pending_dns | dns_verified | error
+  dnsToken    String? // ownership challenge: hipno-verify=<token>
+  dnsCheckJson String? // last multi-resolver verification result (JSON)
+  dnsCheckedAt DateTime?
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  certificate Certificate? @relation(fields: [certId], references: [id], onDelete: SetNull)
+}
+
+model Certificate {
+  id        String    @id @default(cuid())
+  name      String
+  type      String    @default("custom") // custom | self | letsencrypt
+  certPem   String
+  keyEnc    String // AES-256-GCM encrypted private key
+  subject   String?
+  issuer    String?
+  sans      String? // JSON array
+  validFrom DateTime?
+  validTo   DateTime?
+  createdAt DateTime  @default(now())
+  websites  Website[]
+}
+
+model PanelDatabase {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  fileName  String
+  sizeBytes Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------- apps
+
+model App {
+  id           String       @id @default(cuid())
+  name         String
+  slug         String       @unique
+  templateId   String?
+  templateName String?
+  status       String       @default("staged") // staged | running | stopped | error
+  envJson      String? // non-secret env, JSON object
+  secretsEnc   String? // AES-256-GCM encrypted JSON of generated secrets
+  composeYaml  String?
+  domains      String? // JSON array of domains
+  note         String?
+  releases     AppRelease[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  lastDeployAt DateTime?
+}
+
+model AppRelease {
+  id          String   @id @default(cuid())
+  appId       String
+  app         App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  version     Int
+  composeYaml String?
+  note        String?
+  status      String   @default("staged")
+  createdAt   DateTime @default(now())
+}
+
+// ---------------------------------------------------------------- cron
+
+model CronJob {
+  id        String   @id @default(cuid())
+  name      String
+  schedule  String
+  command   String
+  runAs     String   @default("panel")
+  enabled   Boolean  @default(true)
+  lastRunAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  runs      CronRun[]
+}
+
+model CronRun {
+  id         String   @id @default(cuid())
+  jobId      String
+  job        CronJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+  exitCode   Int?
+  output     String?
+  trigger    String   @default("manual") // manual | scheduler
+
+  @@index([jobId, startedAt])
+}
+
+// ---------------------------------------------------------------- backups
+
+model Backup {
+  id        String   @id @default(cuid())
+  name      String
+  scope     String // JSON: { panelDb, sites, databases, config }
+  fileName  String
+  sizeBytes Int
+  sha256    String
+  status    String   @default("ok") // ok | corrupt | restoring
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------- firewall
+
+model FirewallRule {
+  id        String   @id @default(cuid())
+  action    String // allow | deny
+  protocol  String   @default("tcp") // tcp | udp | both
+  portStart Int
+  portEnd   Int
+  source    String   @default("any") // any | CIDR | single IP
+  note      String?
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------- monitoring
+
+model MonitorRule {
+  id          String  @id @default(cuid())
+  name        String
+  metric      String // cpu | memory | disk | load | tunnel | ssl | backup | service
+  operator    String  @default(">") // > | < | ==
+  threshold   Float
+  durationMin Int     @default(0)
+  severity    String  @default("warning") // info | warning | critical
+  channelIds  String? // JSON array of notification channel ids
+  enabled     Boolean @default(true)
+}
+
+model Alert {
+  id         String    @id @default(cuid())
+  ruleId     String?
+  ruleName   String
+  severity   String
+  message    String
+  state      String    @default("firing") // firing | resolved | silenced
+  startedAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([state])
+}
+
+model NotificationChannel {
+  id         String    @id @default(cuid())
+  name       String
+  type       String // webhook | telegram | discord | smtp
+  configEnc  String // AES-256-GCM encrypted JSON config
+  lastTestAt DateTime?
+  lastTestOk Boolean?
+  createdAt  DateTime  @default(now())
+}
+
+// ---------------------------------------------------------------- metrics
+
+model MetricSample {
+  id        String   @id @default(cuid())
+  ts        DateTime @unique
+  cpu       Float // percent 0-100
+  memUsed   BigInt // bytes (64-bit: hosts with > 2 GiB RAM exceed Int32)
+  memTotal  BigInt
+  swapUsed  BigInt
+  swapTotal BigInt
+  diskUsed  BigInt
+  diskTotal BigInt
+  netRx     Int // bytes/sec
+  netTx     Int // bytes/sec
+  load1     Float
+}
+
+// ---------------------------------------------------------------- terminal
+
+model TerminalSession {
+  id        String    @id @default(cuid())
+  userId    String
+  userName  String
+  runAs     String    @default("panel")
+  ip        String?
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  bytesIn   Int       @default(0)
+  bytesOut  Int       @default(0)
+}
+
+// ---------------------------------------------------------------- DNS (spec §5.20)
+
+model DnsZone {
+  id              String      @id @default(cuid())
+  name            String      @unique
+  mode            String      @default("local") // local | provider
+  provider        String? // cloudflare | route53 | gcloud | digitalocean | hetzner | namecheap | godaddy
+  tokenEnc        String? // AES-256-GCM encrypted provider API token
+  tokenStatus     String? // verified | invalid | unverified | untested (real result of the last Cloudflare check)
+  tokenVerifiedAt DateTime?
+  cfZoneId        String? // cached Cloudflare zone id for this zone
+  lastSyncAt      DateTime?
+  primary         String? // primary nameserver shown for glue records
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  records         DnsRecord[]
+}
+
+model DnsRecord {
+  id        String   @id @default(cuid())
+  zoneId    String
+  zone      DnsZone  @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  type      String // A | AAAA | CNAME | MX | TXT | SRV | CAA | NS
+  name      String // "@" or subdomain
+  value     String
+  ttl       Int      @default(3600)
+  priority  Int? // MX / SRV
+  port      Int? // SRV
+  weight    Int? // SRV
+  enabled   Boolean  @default(true)
+  remoteId  String? // provider (Cloudflare) record id once written there
+  syncState String? // synced | pending | error | null (null = local-only zone)
+  syncError String? // last provider error for this record (never contains the token)
+  proxied   Boolean  @default(false) // Cloudflare orange-cloud state (informational)
+  origin    String   @default("panel") // panel | import-bind | import-cloudflare
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([zoneId])
+}
+
+// ---------------------------------------------------------------- mail (spec §5.17 / §5.19)
+
+model MailDomain {
+  id             String     @id @default(cuid())
+  domain         String     @unique
+  enabled        Boolean    @default(true)
+  catchAll       String? // destination address, null = off
+  dkimSelector   String     @default("mail")
+  dkimPublic     String? // public key (DNS TXT side)
+  dkimPrivateEnc String? // AES-256-GCM encrypted private key
+  dmarcPolicy    String     @default("quarantine") // none | quarantine | reject
+  mtaSts         Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  mailboxes      Mailbox[]
+  aliases        MailAlias[]
+}
+
+model Mailbox {
+  id          String     @id @default(cuid())
+  domainId    String
+  domain      MailDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  localPart   String
+  passwordEnc String // AES-256-GCM encrypted mailbox password
+  quotaMb     Int        @default(1024)
+  usedMb      Float      @default(0)
+  enabled     Boolean    @default(true)
+  ratePerHour Int        @default(100) // outbound rate limit (compromised-account containment)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([domainId, localPart])
+}
+
+model MailAlias {
+  id          String     @id @default(cuid())
+  domainId    String
+  domain      MailDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  source      String // local part or "*" (catch-all)
+  destination String
+  createdAt   DateTime   @default(now())
+
+  @@unique([domainId, source, destination])
+}
+
+model SmtpRelay {
+  id          String    @id @default(cuid())
+  name        String
+  host        String
+  port        Int       @default(587)
+  username    String?
+  passwordEnc String? // AES-256-GCM encrypted
+  fromEmail   String?
+  enabled     Boolean   @default(false)
+  lastTestAt  DateTime?
+  lastTestOk  Boolean?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------- WordPress (spec §5.21)
+
+model WpSite {
+  id          String    @id @default(cuid())
+  name        String
+  url         String
+  path        String // document root
+  phpVersion  String    @default("8.3")
+  wpVersion   String?
+  autoCore    String    @default("minor") // off | minor | major
+  autoPlugins Boolean   @default(true)
+  autoThemes  Boolean   @default(false)
+  stagingPath String?
+  status      String    @default("active") // active | error | maintenance
+  lastScanAt  DateTime?
+  scanJson    String? // JSON: { plugins: [...], themes: [...], updates, integrity }
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------- security center (spec §5.22)
+
+model SecurityCheck {
+  id        String   @id @default(cuid())
+  key       String   @unique // ssh.root_login | panel.two_factor | firewall.defaults …
+  title     String
+  severity  String   @default("info") // info | low | medium | high | critical
+  status    String   @default("pass") // pass | warn | fail | na
+  detail    String?
+  fixAction String? // human description of what "Fix it" will do
+  updatedAt DateTime @updatedAt
+}

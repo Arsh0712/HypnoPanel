@@ -1,0 +1,18 @@
+[Unit]
+Description=HipnoType Relay — access-URL routing + tunnel service
+After=network.target
+
+[Service]
+Type=simple
+User=hipno-relay
+WorkingDirectory=/opt/hipno-relay
+ExecStart=/usr/bin/bun /opt/hipno-relay/index.ts
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/hipno-relay/data
+
+[Install]
+WantedBy=multi-user.target

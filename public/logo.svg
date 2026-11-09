@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!--
+    HipnoType spiral favicon — theme-adaptive:
+    near-black mark on a warm-light tile for light browser chrome,
+    warm-white mark on a charcoal tile for dark browser chrome.
+    The ember centre dot keeps the brand accent in both schemes.
+  -->
+  <style>
+    .tile   { fill: #f6f1ea; }
+    .stroke { stroke: #191216; }
+    @media (prefers-color-scheme: dark) {
+      .tile   { fill: #201418; }
+      .stroke { stroke: #fbf3ea; }
+    }
+  </style>
+  <rect class="tile" width="64" height="64" rx="15"/>
+  <path class="stroke" d="M32 9.5a22.5 22.5 0 1 1-15.9 6.6" stroke-width="5.4" stroke-linecap="round"/>
+  <path class="stroke" d="M32 18.5a13.5 13.5 0 1 0 9.5 4" stroke-width="5.4" stroke-linecap="round" opacity="0.92"/>
+  <circle cx="32" cy="32" r="4.2" fill="#ff6a3d"/>
+</svg>

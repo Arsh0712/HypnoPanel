@@ -1,0 +1,14 @@
+{
+  "name": "hipno-terminal-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HipnoType Panel \u2014 web terminal PTY service (port 3004, Node runtime: node-pty requires Node FD semantics)",
+  "scripts": {
+    "dev": "node --watch index.ts",
+    "start": "node index.ts"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "socket.io": "^4.8.4"
+  }
+}
